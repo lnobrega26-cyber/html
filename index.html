@@ -211,13 +211,28 @@ function move(i,d){ const j=i+d; if(j<0||j>=data.rows.length) return; [data.rows
 
 /* ---------- Xarxa ---------- */
 async function fetchRemote(){
-  const h = {"Accept":"application/vnd.github+json"};
-  if(token()) h.Authorization = "Bearer "+token();
-  const r = await fetch(`${API}?ref=${BRANCH}&t=${Date.now()}`, {headers:h, cache:"no-store"});
-  if(r.status===404) return {json:null, sha:null};
-  if(!r.ok) throw new Error("HTTP "+r.status);
-  const j = await r.json();
-  return {json: JSON.parse(b64d(j.content)), sha:j.sha};
+  const url = `${API}?ref=${BRANCH}&t=${Date.now()}`;
+  const tries = token() ? [true,false] : [false];   // si la clau falla, llegim sense clau
+  let last = null;
+  for(const useTok of tries){
+    const h = {"Accept":"application/vnd.github+json"};
+    if(useTok) h.Authorization = "Bearer "+token();
+    try{
+      const r = await fetch(url, {headers:h, cache:"no-store"});
+      if(r.status===404) return {json:null, sha:null};
+      if(r.ok){
+        const j = await r.json();
+        return {json: JSON.parse(b64d(j.content)), sha:j.sha};
+      }
+      last = new Error("HTTP "+r.status);
+    }catch(e){ last = e; }
+  }
+  // últim recurs: fitxer directe de GitHub
+  try{
+    const r = await fetch(`https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}/${FILE}?t=${Date.now()}`,{cache:"no-store"});
+    if(r.ok) return {json: await r.json(), sha:null, stale:true};
+  }catch(e){}
+  throw last || new Error("sense xarxa");
 }
 
 async function load(first){
@@ -233,7 +248,7 @@ async function load(first){
     if(!dirty) setStatus("✔ Sincronitzat","ok");
   }catch(e){
     if(!data){ data=defaults(); base=clone(data); render(); }
-    setStatus("Sense connexió amb GitHub","bad");
+    setStatus("Sense connexió amb GitHub ("+(e&&e.message||"error")+")","bad");
   }
 }
 
