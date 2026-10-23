@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="ca">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Horari escolar</title>
+<style>
+  :root{
+    --bg:#f5f6fa; --card:#fff; --ink:#1f2433; --muted:#6b7280; --line:#e3e6ef;
+    --accent:#3b5bdb; --ok:#2f9e44; --warn:#e8590c; --bad:#c92a2a;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#14161d; --card:#1e212b; --ink:#eceef5; --muted:#9aa1b2; --line:#2e3240; --accent:#748ffc; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:1100px;margin:0 auto;padding:20px 16px 60px}
+  header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;margin-bottom:16px}
+  h1{margin:0;font-size:26px;outline:none}
+  .bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  button{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:7px 12px;border-radius:8px;cursor:pointer}
+  button:hover{border-color:var(--accent)}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .status{font-size:13px;padding:4px 10px;border-radius:99px;background:var(--card);border:1px solid var(--line);color:var(--muted)}
+  .status.ok{color:var(--ok)} .status.warn{color:var(--warn)} .status.bad{color:var(--bad)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:auto}
+  table{border-collapse:collapse;width:100%;min-width:720px;table-layout:fixed}
+  th,td{border:1px solid var(--line);padding:0;vertical-align:top}
+  th{background:var(--bg);padding:10px 8px;font-weight:600;text-align:center}
+  td.time{width:120px;background:var(--bg);color:var(--muted);font-size:13px;text-align:center;padding:8px 4px;position:relative}
+  td.cell{height:68px}
+  .edit{display:block;min-height:100%;height:100%;padding:8px 10px;outline:none;white-space:pre-wrap;word-break:break-word}
+  .editing .edit:hover{background:rgba(59,91,219,.07)}
+  .edit:focus{box-shadow:inset 0 0 0 2px var(--accent)}
+  tr.break td.cell{background:repeating-linear-gradient(45deg,transparent 0 8px,rgba(120,120,120,.07) 8px 16px);text-align:center;color:var(--muted);height:34px}
+  .rowtools{display:none;position:absolute;right:2px;top:2px;gap:2px}
+  .editing .rowtools{display:flex}
+  .rowtools button{padding:0 6px;font-size:12px;line-height:20px;border-radius:6px}
+  .hint{color:var(--muted);font-size:13px;margin-top:14px}
+  dialog{border:1px solid var(--line);border-radius:14px;background:var(--card);color:var(--ink);max-width:520px;padding:22px}
+  dialog::backdrop{background:rgba(0,0,0,.45)}
+  dialog h2{margin:0 0 8px} dialog p,dialog li{color:var(--muted);font-size:14px}
+  input[type=password],input[type=text]{width:100%;font:inherit;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+  .row{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+  @media print{ .bar,.hint,.rowtools{display:none!important} body{background:#fff} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1 id="title" title="Horari escolar">Horari escolar</h1>
+    <div class="bar">
+      <span id="status" class="status">Carregant…</span>
+      <button id="btnEdit" class="primary">✏️ Editar</button>
+      <button id="btnAddRow" hidden>+ Fila</button>
+      <button id="btnAddBreak" hidden>+ Pati</button>
+      <button id="btnToken" hidden>🔑 Clau GitHub</button>
+      <button onclick="print()">🖨️ Imprimir</button>
+    </div>
+  </header>
+
+  <div class="card" id="card">
+    <table>
+      <thead id="thead"></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+  <p class="hint">Tothom veu la mateixa versió: els canvis es desen al repositori de GitHub i la pàgina es refresca sola cada 30 segons.
+     <span id="updated"></span></p>
+</div>
+
+<dialog id="dlgToken">
+  <h2>Clau d'accés a GitHub</h2>
+  <p>Per desar canvis cal una clau personal (<i>fine-grained token</i>) amb permís <b>Contents: Read and write</b> només sobre aquest repositori.</p>
+  <ol>
+    <li>GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens</li>
+    <li>Repository access: només aquest repositori</li>
+    <li>Permissions → Contents: <b>Read and write</b></li>
+  </ol>
+  <input id="tokenInput" type="password" placeholder="github_pat_…" autocomplete="off">
+  <p>Es guarda només en aquest navegador.</p>
+  <div class="row">
+    <button id="tokenClear">Esborrar</button>
+    <button id="tokenCancel">Cancel·lar</button>
+    <button id="tokenSave" class="primary">Desar</button>
+  </div>
+</dialog>
+
+<script>
+/* ====== CONFIGURACIÓ ====== */
+const OWNER  = "lnobrega26-cyber";
+const REPO   = "html";
+const BRANCH = "main";
+const FILE   = "horaris.json";
+const POLL_MS = 30000;
+/* ========================== */
+
+const API = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${FILE}`;
+const $ = id => document.getElementById(id);
+let data = null;        // estat local
+let base = null;        // darrera versió coneguda del servidor
+let sha = null;
+let editing = false, dirty = false, saving = false, saveTimer = null;
+
+const store = {
+  get(k){ try{return localStorage.getItem(k)}catch(e){return null} },
+  set(k,v){ try{localStorage.setItem(k,v)}catch(e){} },
+  del(k){ try{localStorage.removeItem(k)}catch(e){} }
+};
+const token = () => store.get("gh_token") || "";
+
+function setStatus(t, cls=""){ const s=$("status"); s.textContent=t; s.className="status "+cls; }
+const clone = o => JSON.parse(JSON.stringify(o));
+const b64d = s => decodeURIComponent(escape(atob(s.replace(/\n/g,""))));
+const b64e = s => btoa(unescape(encodeURIComponent(s)));
+
+/* ---------- Dades per defecte ---------- */
+function defaults(){
+  const e = () => ["","","","",""];
+  return {
+    title:"Horari escolar",
+    days:["Dilluns","Dimarts","Dimecres","Dijous","Divendres"],
+    rows:[
+      {time:"8:00 – 9:00",   cells:e()},
+      {time:"9:00 – 10:00",  cells:e()},
+      {time:"10:00 – 11:00", cells:e()},
+      {time:"11:00 – 11:30", brk:true, label:"Pati"},
+      {time:"11:30 – 12:30", cells:e()},
+      {time:"12:30 – 13:30", cells:e()},
+      {time:"13:30 – 14:30", cells:e()}
+    ],
+    updated:null
+  };
+}
+
+/* ---------- Colors per assignatura ---------- */
+function colorFor(txt){
+  const k = txt.trim().split("\n")[0].toLowerCase();
+  if(!k) return "";
+  let h=0; for(const c of k) h=(h*31+c.charCodeAt(0))%360;
+  return `hsl(${h} 70% 55% / .16)`;
+}
+
+/* ---------- Render ---------- */
+function render(){
+  document.body.classList.toggle("editing", editing);
+  $("title").textContent = data.title;
+  $("title").contentEditable = editing;
+  document.title = data.title;
+
+  const th = $("thead"); th.innerHTML="";
+  const tr = document.createElement("tr");
+  tr.innerHTML = "<th style='width:120px'>Hora</th>";
+  data.days.forEach((d,i)=>{
+    const t=document.createElement("th"); t.textContent=d; t.contentEditable=editing;
+    t.oninput=()=>{data.days[i]=t.textContent; changed();};
+    tr.appendChild(t);
+  });
+  th.appendChild(tr);
+
+  const tb = $("tbody"); tb.innerHTML="";
+  data.rows.forEach((r,ri)=>{
+    const row = document.createElement("tr"); if(r.brk) row.className="break";
+    const tm = document.createElement("td"); tm.className="time";
+    const lab = document.createElement("div"); lab.className="edit"; lab.textContent=r.time; lab.contentEditable=editing;
+    lab.oninput=()=>{r.time=lab.textContent; changed();};
+    tm.appendChild(lab);
+    const tools=document.createElement("div"); tools.className="rowtools";
+    tools.innerHTML="<button title='Pujar'>↑</button><button title='Baixar'>↓</button><button title='Esborrar'>✕</button>";
+    const [up,dn,rm]=tools.children;
+    up.onclick=()=>move(ri,-1); dn.onclick=()=>move(ri,1);
+    rm.onclick=()=>{ if(confirm("Esborrar aquesta fila?")){data.rows.splice(ri,1); changed(); render();} };
+    tm.appendChild(tools);
+    row.appendChild(tm);
+
+    if(r.brk){
+      const td=document.createElement("td"); td.className="cell"; td.colSpan=data.days.length;
+      const d=document.createElement("div"); d.className="edit"; d.textContent=r.label||"Pati"; d.contentEditable=editing;
+      d.oninput=()=>{r.label=d.textContent; changed();};
+      td.appendChild(d); row.appendChild(td);
+    } else {
+      data.days.forEach((_,ci)=>{
+        const td=document.createElement("td"); td.className="cell";
+        const d=document.createElement("div"); d.className="edit"; d.contentEditable=editing;
+        d.textContent=r.cells[ci]||"";
+        td.style.background=colorFor(d.textContent);
+        d.oninput=()=>{ r.cells[ci]=d.innerText.replace(/\n$/,""); td.style.background=colorFor(r.cells[ci]); changed(); };
+        td.appendChild(d); row.appendChild(td);
+      });
+    }
+    tb.appendChild(row);
+  });
+
+  $("btnEdit").textContent = editing ? "✔️ Acabar" : "✏️ Editar";
+  ["btnAddRow","btnAddBreak","btnToken"].forEach(id=>$(id).hidden=!editing);
+  if(data.updated) $("updated").textContent = "Última modificació: "+new Date(data.updated).toLocaleString("ca-ES");
+}
+function move(i,d){ const j=i+d; if(j<0||j>=data.rows.length) return; [data.rows[i],data.rows[j]]=[data.rows[j],data.rows[i]]; changed(); render(); }
+
+/* ---------- Xarxa ---------- */
+async function fetchRemote(){
+  const h = {"Accept":"application/vnd.github+json"};
+  if(token()) h.Authorization = "Bearer "+token();
+  const r = await fetch(`${API}?ref=${BRANCH}&t=${Date.now()}`, {headers:h, cache:"no-store"});
+  if(r.status===404) return {json:null, sha:null};
+  if(!r.ok) throw new Error("HTTP "+r.status);
+  const j = await r.json();
+  return {json: JSON.parse(b64d(j.content)), sha:j.sha};
+}
+
+async function load(first){
+  try{
+    const r = await fetchRemote();
+    const remote = r.json || defaults();
+    if(first || (!editing && !dirty)){
+      if(first || JSON.stringify(remote)!==JSON.stringify(base)){
+        data = clone(remote); render();
+      }
+    }
+    base = clone(remote); sha = r.sha;
+    if(!dirty) setStatus("✔ Sincronitzat","ok");
+  }catch(e){
+    if(!data){ data=defaults(); base=clone(data); render(); }
+    setStatus("Sense connexió amb GitHub","bad");
+  }
+}
+
+function changed(){
+  dirty = true; setStatus("Canvis sense desar…","warn");
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(save, 1200);
+}
+
+/* Fusiona els canvis locals (vs base) sobre la versió remota per no trepitjar altres editors */
+function merge(remote){
+  if(!remote) return clone(data);
+  const out = clone(remote);
+  if(remote.rows.length!==base.rows.length || data.rows.length!==base.rows.length ||
+     remote.days.length!==base.days.length) return clone(data);
+  if(data.title!==base.title) out.title=data.title;
+  data.days.forEach((d,i)=>{ if(d!==base.days[i]) out.days[i]=d; });
+  data.rows.forEach((r,i)=>{
+    const b=base.rows[i];
+    if(r.time!==b.time) out.rows[i].time=r.time;
+    if(r.brk && r.label!==b.label) out.rows[i].label=r.label;
+    if(!r.brk && r.cells) r.cells.forEach((c,j)=>{ if(c!==b.cells[j]) out.rows[i].cells[j]=c; });
+  });
+  return out;
+}
+
+async function save(){
+  if(saving || !dirty) return;
+  if(!token()){ setStatus("Cal la clau de GitHub per desar","bad"); openToken(); return; }
+  saving = true; setStatus("Desant…","warn");
+  try{
+    for(let attempt=0; attempt<3; attempt++){
+      const r = await fetchRemote();
+      const merged = merge(r.json);
+      merged.updated = new Date().toISOString();
+      const res = await fetch(API,{
+        method:"PUT",
+        headers:{"Accept":"application/vnd.github+json","Authorization":"Bearer "+token(),"Content-Type":"application/json"},
+        body:JSON.stringify({
+          message:"Actualitza l'horari",
+          content:b64e(JSON.stringify(merged,null,2)),
+          branch:BRANCH,
+          ...(r.sha?{sha:r.sha}:{})
+        })
+      });
+      if(res.status===409||res.status===422) continue;           // algú ha desat abans: reintenta
+      if(res.status===401||res.status===403||res.status===404){
+        setStatus("Clau no vàlida o sense permís","bad"); saving=false; openToken(); return;
+      }
+      if(!res.ok) throw new Error("HTTP "+res.status);
+      const j = await res.json();
+      sha = j.content.sha; base = clone(merged);
+      data.updated = merged.updated;
+      dirty = false; setStatus("✔ Desat i publicat","ok");
+      $("updated").textContent = "Última modificació: "+new Date(merged.updated).toLocaleString("ca-ES");
+      saving=false; return;
+    }
+    throw new Error("conflicte");
+  }catch(e){
+    setStatus("Error en desar: "+e.message,"bad");
+  }
+  saving=false;
+}
+
+/* ---------- UI ---------- */
+$("btnEdit").onclick = ()=>{
+  editing = !editing;
+  if(editing && !token()) openToken();
+  if(!editing && dirty){ clearTimeout(saveTimer); save(); }
+  render();
+};
+$("btnAddRow").onclick = ()=>{ data.rows.push({time:"Nova hora",cells:data.days.map(()=>"")}); changed(); render(); };
+$("btnAddBreak").onclick = ()=>{ data.rows.push({time:"Hora",brk:true,label:"Pati"}); changed(); render(); };
+$("title").oninput = ()=>{ data.title=$("title").textContent; document.title=data.title; changed(); };
+$("btnToken").onclick = openToken;
+
+function openToken(){ $("tokenInput").value=token(); $("dlgToken").showModal(); }
+$("tokenSave").onclick  = ()=>{ store.set("gh_token",$("tokenInput").value.trim()); $("dlgToken").close(); if(dirty) save(); };
+$("tokenClear").onclick = ()=>{ store.del("gh_token"); $("tokenInput").value=""; };
+$("tokenCancel").onclick= ()=>$("dlgToken").close();
+
+window.addEventListener("beforeunload",e=>{ if(dirty){ e.preventDefault(); e.returnValue=""; } });
+document.addEventListener("visibilitychange",()=>{ if(!document.hidden) load(false); });
+
+load(true);
+setInterval(()=>load(false), POLL_MS);
+</script>
+</body>
+</html>
