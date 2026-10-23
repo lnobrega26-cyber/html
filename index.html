@@ -69,6 +69,17 @@
      <span id="updated"></span></p>
 </div>
 
+<dialog id="dlgPass">
+  <h2>Contrasenya</h2>
+  <p>Introdueix la contrasenya per poder editar l'horari.</p>
+  <input id="passInput" type="password" placeholder="Contrasenya" autocomplete="off">
+  <p id="passErr" style="color:var(--bad);display:none">Contrasenya incorrecta.</p>
+  <div class="row">
+    <button id="passCancel">Cancel·lar</button>
+    <button id="passOk" class="primary">Entrar</button>
+  </div>
+</dialog>
+
 <dialog id="dlgToken">
   <h2>Clau d'accés a GitHub</h2>
   <p>Per desar canvis cal una clau personal (<i>fine-grained token</i>) amb permís <b>Contents: Read and write</b> només sobre aquest repositori.</p>
@@ -93,6 +104,7 @@ const REPO   = "html";
 const BRANCH = "main";
 const FILE   = "horaris.json";
 const POLL_MS = 30000;
+const PASS_HASH = "e24df920078c3dd4e7e8d2442f00e5c9ab2a231bb3918d65cc50906e49ecaef4"; // SHA-256 de la contrasenya
 /* ========================== */
 
 const API = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${FILE}`;
@@ -287,12 +299,29 @@ async function save(){
 }
 
 /* ---------- UI ---------- */
-$("btnEdit").onclick = ()=>{
+async function sha256(t){
+  const b=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(t));
+  return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,"0")).join("");
+}
+function toggleEdit(){
   editing = !editing;
   if(editing && !token()) openToken();
   if(!editing && dirty){ clearTimeout(saveTimer); save(); }
   render();
+}
+$("btnEdit").onclick = ()=>{
+  if(editing || sessionStorage.getItem("unlocked")==="1"){ toggleEdit(); return; }
+  $("passInput").value=""; $("passErr").style.display="none"; $("dlgPass").showModal(); $("passInput").focus();
 };
+async function tryPass(){
+  if(await sha256($("passInput").value)===PASS_HASH){
+    try{sessionStorage.setItem("unlocked","1")}catch(e){}
+    $("dlgPass").close(); toggleEdit();
+  } else $("passErr").style.display="block";
+}
+$("passOk").onclick = tryPass;
+$("passInput").onkeydown = e=>{ if(e.key==="Enter") tryPass(); };
+$("passCancel").onclick = ()=>$("dlgPass").close();
 $("btnAddRow").onclick = ()=>{ data.rows.push({time:"Nova hora",cells:data.days.map(()=>"")}); changed(); render(); };
 $("btnAddBreak").onclick = ()=>{ data.rows.push({time:"Hora",brk:true,label:"Pati"}); changed(); render(); };
 $("title").oninput = ()=>{ data.title=$("title").textContent; document.title=data.title; changed(); };
